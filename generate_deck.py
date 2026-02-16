@@ -142,6 +142,7 @@ def fetch_osm_data() -> list[dict]:
         log.info("Fetching OSM data: %s", filename)
         try:
             resp = fetch_url(url)
+            assert resp is not None
             signs = parse_ts_signs(resp.text)
             log.info("  -> %d signs from %s", len(signs), filename)
             all_signs.extend(signs)
@@ -153,6 +154,7 @@ def fetch_osm_data() -> list[dict]:
     log.info("Fetching OSM data: trafficSignDataDE.ts (misc signs)")
     try:
         resp = fetch_url(url)
+        assert resp is not None
         misc_signs = parse_ts_signs(resp.text)
         # Filter out signs we already have
         existing_ids = {s["sign_id"] for s in all_signs}
@@ -191,7 +193,9 @@ def download_svg(sign_id: str) -> bytes | None:
 
 def svg_to_png(svg_data: bytes, width: int = 400) -> bytes:
     """Convert SVG to PNG using cairosvg."""
-    return cairosvg.svg2png(bytestring=svg_data, output_width=width)
+    result = cairosvg.svg2png(bytestring=svg_data, output_width=width)
+    assert isinstance(result, bytes)
+    return result
 
 
 def download_degener_png(sign_number: str) -> bytes | None:
@@ -220,6 +224,7 @@ def scrape_click_learn() -> dict[str, dict]:
     """
     log.info("Scraping click-learn.de...")
     resp = fetch_url(SOURCE_URL)
+    assert resp is not None
     resp.encoding = "utf-8"
     soup = BeautifulSoup(resp.text, "lxml")
 
@@ -337,9 +342,12 @@ def get_category_tag(sign_id: str, osm_category: str) -> str:
         return tag
 
     # Fallback: categorize by number range
+    m = re.match(r"(\d+)", sign_id)
+    if not m:
+        return "sonstige"
     try:
-        base_num = int(re.match(r"(\d+)", sign_id).group(1))
-    except (AttributeError, ValueError):
+        base_num = int(m.group(1))
+    except ValueError:
         return "sonstige"
 
     if 100 <= base_num < 200:
@@ -621,7 +629,7 @@ def build_deck(
 # --- Phase F: Verify ---
 
 
-def verify_deck(deck_path: Path, expected_count: int):
+def verify_deck(deck_path: Path):
     """Basic verification of the generated deck."""
     import zipfile
 
@@ -700,7 +708,7 @@ def main():
 
     # Phase F: Verify
     log.info("--- Phase F: Verifying deck ---")
-    verify_deck(deck_path, len(merged_signs))
+    verify_deck(deck_path)
 
     log.info("=== Done! Import %s into Anki. ===", deck_path)
 
