@@ -266,6 +266,55 @@ def scrape_click_learn() -> dict[str, dict]:
     return signs
 
 
+STRASSENAUSSTATTER_SEARCH = "https://www.strassenausstatter.de/?s=verkehrszeichen+{}"
+
+
+def fetch_strassenausstatter_description(sign_id: str) -> str:
+    """Try to fetch a description from strassenausstatter.de search results."""
+    url = STRASSENAUSSTATTER_SEARCH.format(sign_id)
+    resp = fetch_url(url, raise_on_404=False)
+    if resp is None:
+        return ""
+    resp.encoding = "utf-8"
+    soup = BeautifulSoup(resp.text, "lxml")
+
+    # Look for "Bedeutung:" in the page text
+    for el in soup.find_all(["p", "div", "span"]):
+        text = el.get_text()
+        if "Bedeutung:" in text:
+            # Extract the text after "Bedeutung:"
+            idx = text.index("Bedeutung:")
+            desc = text[idx + len("Bedeutung:") :].strip()
+            # Clean up — take until the next section heading or end
+            # Often followed by "Aufstellung:" or similar
+            for cutoff in ["Aufstellung:", "Grundlage:", "Besonderheit:"]:
+                if cutoff in desc:
+                    desc = desc[: desc.index(cutoff)].strip()
+            if desc:
+                return desc
+    return ""
+
+
+def fill_missing_descriptions(signs: list[dict]) -> None:
+    """Fill in missing descriptions from strassenausstatter.de."""
+    missing = [s for s in signs if not s["description"] and s["sign_id"][0].isdigit()]
+    if not missing:
+        return
+
+    log.info("Fetching descriptions for %d signs from strassenausstatter.de...", len(missing))
+    filled = 0
+    for i, sign in enumerate(missing, 1):
+        if i % 10 == 0:
+            log.info("  Description lookup: %d/%d", i, len(missing))
+        desc = fetch_strassenausstatter_description(sign["sign_id"])
+        if desc:
+            sign["description"] = desc
+            filled += 1
+        time.sleep(0.2)  # Be polite
+
+    log.info("Filled %d/%d missing descriptions", filled, len(missing))
+
+
 # --- Phase C: Merge data ---
 
 
@@ -539,9 +588,10 @@ def build_deck(
         name_field = html.escape(sign["display_name"])
         desc_field = html.escape(sign["description"]).replace("\n", "<br>")
 
-        tags = ["verkehrszeichen"]
         if sign["category_tag"]:
-            tags.append(sign["category_tag"])
+            tags = [f"verkehrszeichen::{sign['category_tag']}"]
+        else:
+            tags = ["verkehrszeichen"]
 
         note = genanki.Note(
             model=model,
@@ -635,6 +685,10 @@ def main():
     # Phase C: Merge
     log.info("--- Phase C: Merging data ---")
     merged_signs = merge_signs(osm_signs, click_learn_data)
+
+    # Phase C2: Fill missing descriptions from strassenausstatter.de
+    log.info("--- Phase C2: Filling missing descriptions ---")
+    fill_missing_descriptions(merged_signs)
 
     # Phase D: Download images
     log.info("--- Phase D: Downloading images ---")
